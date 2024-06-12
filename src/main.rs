@@ -38,4 +38,7 @@ async fn main() {
     let mut plug = PlugMini::new(peripheral.unwrap());
 
     plug.connect().await.unwrap();
+    println!("Connected");
+
+    plug.set_state(plug_mini::SetStateOperation::Toggle).await.unwrap();
 }
