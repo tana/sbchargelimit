@@ -70,7 +70,7 @@ impl PlugMini {
         else {
             return Err(anyhow!("RX characteristic not found"));
         };
-        
+
         // Response is sent through the TX characteristic
         // (i.e. RX and TX is defined as seen from the device)
         self.peripheral.subscribe(tx_chr).await?;

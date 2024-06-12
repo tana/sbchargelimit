@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 btleplug = "0.11.5"
+confy = "0.6.1"
+serde = { version = "1.0.203", features = ["derive"] }
 tokio = { version = "1.38.0", features = ["full"] }
 tokio-stream = "0.1.15"
 uuid = "1.8.0"
