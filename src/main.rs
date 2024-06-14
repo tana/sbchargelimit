@@ -1,10 +1,13 @@
 mod config;
 mod plug_mini;
 
+use std::time::Duration;
+
+use anyhow::anyhow;
 use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
 use config::Config;
-use plug_mini::PlugMini;
+use plug_mini::{PlugMini, SetStateOperation};
 use tokio_stream::StreamExt;
 
 const APP_NAME: &str = "sbchargelimit";
@@ -19,6 +22,17 @@ async fn main() {
             .unwrap()
     );
     let config: Config = confy::load(APP_NAME, None).unwrap();
+
+    // Initialize battery state access
+    let battery_manager = starship_battery::Manager::new().unwrap();
+    // Use first battery
+    let mut battery = battery_manager
+        .batteries()
+        .unwrap()
+        .next()
+        .ok_or(anyhow!("No battery found"))
+        .unwrap()
+        .unwrap();
 
     // Init BLE central
     let manager = Manager::new().await.unwrap();
@@ -52,7 +66,29 @@ async fn main() {
     plug.connect().await.unwrap();
     println!("Connected");
 
-    plug.set_state(plug_mini::SetStateOperation::Toggle)
-        .await
-        .unwrap();
+    // Periodically do operations at a constant interval
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    loop {
+        interval.tick().await;
+
+        battery_manager.refresh(&mut battery).unwrap();
+
+        let remaining = battery.state_of_charge().value;
+        let state = battery.state();
+
+        println!("{:?} {}", state, remaining);
+        match state {
+            starship_battery::State::Charging | starship_battery::State::Full
+                if remaining > config.stop_thresh =>
+            {
+                println!("TurnOff");
+                plug.set_state(SetStateOperation::TurnOff).await.unwrap();
+            }
+            _ if remaining < config.start_thresh => {
+                println!("TurnOn");
+                plug.set_state(SetStateOperation::TurnOn).await.unwrap();
+            }
+            _ => (),
+        }
+    }
 }
