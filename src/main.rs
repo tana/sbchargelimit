@@ -1,5 +1,8 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod config;
 mod plug_mini;
+mod tray_icon;
 
 use std::time::Duration;
 
@@ -23,6 +26,16 @@ async fn main() {
     );
     let config: Config = confy::load(APP_NAME, None).unwrap();
 
+    let actual_main_handle = tokio::spawn(actual_main(config));
+
+    // Run run_tray_icon_loop in main thread
+    // (because sometimes GUI does not correctly work on other threads)
+    tokio::task::block_in_place(tray_icon::run_tray_icon_loop);
+
+    actual_main_handle.await.unwrap();  // join
+}
+
+async fn actual_main(config: Config) {
     // Initialize battery state access
     let battery_manager = starship_battery::Manager::new().unwrap();
     // Use first battery
