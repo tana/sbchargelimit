@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "It keeps your laptop's battery charge below a certain threshold, using a SwitchBot smart plug."
-repository = "https://github.com/tana/shiftreg-spi"
+repository = "https://github.com/tana/sbchargelimit"
 readme = "README.md"
 
 [dependencies]
