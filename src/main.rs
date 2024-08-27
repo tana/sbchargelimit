@@ -6,9 +6,9 @@ mod tray_icon;
 
 use std::time::Duration;
 
-use anyhow::anyhow;
-use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral, ScanFilter};
-use btleplug::platform::Manager;
+use anyhow::{anyhow, Result};
+use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::platform::{Adapter, Manager, Peripheral};
 use config::Config;
 use plug_mini::{PlugMini, SetStateOperation};
 use tokio_stream::StreamExt;
@@ -32,7 +32,7 @@ async fn main() {
     // (because sometimes GUI does not correctly work on other threads)
     tokio::task::block_in_place(tray_icon::run_tray_icon_loop);
 
-    actual_main_handle.await.unwrap();  // join
+    actual_main_handle.await.unwrap(); // join
 }
 
 async fn actual_main(config: Config) {
@@ -49,7 +49,7 @@ async fn actual_main(config: Config) {
 
     // Init BLE central
     let manager = Manager::new().await.unwrap();
-    let central = manager
+    let mut central = manager
         .adapters()
         .await
         .unwrap()
@@ -57,27 +57,7 @@ async fn actual_main(config: Config) {
         .next()
         .unwrap();
 
-    // Search a SwitchBot Plug Mini
-    println!("Searching for the device...");
-    central.start_scan(ScanFilter::default()).await.unwrap();
-    let mut events = central.events().await.unwrap();
-    let mut peripheral = None;
-    while let Some(evt) = events.next().await {
-        if let CentralEvent::DeviceDiscovered(id) = evt {
-            let found_peripheral = central.peripheral(&id).await.unwrap();
-            // Use the first device which matches with the specified MAC address
-            if found_peripheral.address() == BDAddr::from_str_delim(&config.plug_mini.addr).unwrap()
-            {
-                peripheral = Some(found_peripheral);
-                break;
-            }
-        }
-    }
-
-    let mut plug = PlugMini::new(peripheral.unwrap());
-
-    plug.connect().await.unwrap();
-    println!("Connected");
+    let mut plug = connect_plug(&mut central, &config).await.unwrap();
 
     // Periodically do operations at a constant interval
     let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -95,13 +75,55 @@ async fn actual_main(config: Config) {
                 if remaining > config.stop_thresh =>
             {
                 println!("TurnOff");
+
+                // Reconnect if needded
+                if !plug.is_connected().await.unwrap() {
+                    plug = connect_plug(&mut central, &config).await.unwrap();
+                }
                 plug.set_state(SetStateOperation::TurnOff).await.unwrap();
             }
             _ if remaining < config.start_thresh => {
                 println!("TurnOn");
+
+                // Reconnect if needded
+                if !plug.is_connected().await.unwrap() {
+                    plug = connect_plug(&mut central, &config).await.unwrap();
+                }
                 plug.set_state(SetStateOperation::TurnOn).await.unwrap();
             }
             _ => (),
         }
     }
+}
+
+async fn connect_plug(central: &mut Adapter, config: &Config) -> Result<PlugMini> {
+    let peripheral = tokio::time::timeout(
+        Duration::from_secs(config.search_timeout),
+        search_plug(central, config),
+    )
+    .await??;
+    let mut plug = PlugMini::new(peripheral);
+
+    plug.connect().await?;
+    println!("Connected");
+
+    Ok(plug)
+}
+
+// Search for a SwitchBot Plug Mini
+async fn search_plug(central: &mut Adapter, config: &Config) -> Result<Peripheral> {
+    println!("Searching for the device...");
+    central.start_scan(ScanFilter::default()).await?;
+    let mut events = central.events().await?;
+    while let Some(evt) = events.next().await {
+        if let CentralEvent::DeviceDiscovered(id) = evt {
+            let found_peripheral = central.peripheral(&id).await?;
+            // Use the first device which matches with the specified MAC address
+            if found_peripheral.address() == BDAddr::from_str_delim(&config.plug_mini.addr)? {
+                return Ok(found_peripheral);
+            }
+        }
+    }
+
+    unreachable!()
 }

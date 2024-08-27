@@ -28,7 +28,7 @@ pub struct PlugMini {
     rx_chr: Option<Characteristic>,
     notification_task_handle: Option<JoinHandle<()>>,
     chan_receiver: Option<Receiver<Vec<u8>>>,
-    connected: bool,
+    initialized: bool,
 }
 
 impl PlugMini {
@@ -39,7 +39,7 @@ impl PlugMini {
             rx_chr: None,
             notification_task_handle: None,
             chan_receiver: None,
-            connected: false,
+            initialized: false,
         }
     }
 
@@ -88,7 +88,7 @@ impl PlugMini {
         self.rx_chr = Some(rx_chr.clone());
         self.chan_receiver = Some(chan_rx);
 
-        self.connected = true;
+        self.initialized = true;
 
         Ok(())
     }
@@ -114,7 +114,7 @@ impl PlugMini {
     }
 
     async fn send_request(&mut self, cmd: u8, payload: &[u8]) -> Result<Vec<u8>> {
-        if !self.connected {
+        if !self.initialized {
             return Err(anyhow!("Device not connected"));
         }
 
@@ -138,5 +138,9 @@ impl PlugMini {
             .recv()
             .await
             .ok_or(anyhow!("Channel broken"))?)
+    }
+
+    pub async fn is_connected(&self) -> Result<bool> {
+        Ok(self.peripheral.is_connected().await? && self.initialized)
     }
 }
