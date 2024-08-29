@@ -4,12 +4,15 @@ mod config;
 mod plug_mini;
 mod tray_icon;
 
+use std::fs::{self, OpenOptions};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use config::Config;
+use directories::ProjectDirs;
+use env_logger::Env;
 use plug_mini::{PlugMini, SetStateOperation};
 use tokio_stream::StreamExt;
 
@@ -17,7 +20,33 @@ const APP_NAME: &str = "sbchargelimit";
 
 #[tokio::main]
 async fn main() {
-    println!(
+    let mut logger_builder =
+        env_logger::Builder::from_env(Env::default().default_filter_or("info"));
+    // Same as in `confy`
+    let log_path = match ProjectDirs::from("rs", "", APP_NAME) {
+        Some(project_dirs) => {
+            let now = chrono::Local::now();
+            let target = project_dirs
+                .cache_dir()
+                .join(now.format("log_%Y%m%d_%H%M%S.log").to_string());
+            
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+
+            logger_builder.target(env_logger::Target::Pipe(Box::new(
+                OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&target)
+                    .unwrap(),
+            )));
+
+            Some(target)
+        }
+        None => None,
+    };
+    logger_builder.init();
+
+    log::info!(
         "Loading config from {}",
         confy::get_configuration_file_path(APP_NAME, None)
             .unwrap()
@@ -30,7 +59,7 @@ async fn main() {
 
     // Run run_tray_icon_loop in main thread
     // (because sometimes GUI does not correctly work on other threads)
-    tokio::task::block_in_place(tray_icon::run_tray_icon_loop);
+    tokio::task::block_in_place(|| tray_icon::run_tray_icon_loop(log_path));
 
     actual_main_handle.await.unwrap(); // join
 }
@@ -69,12 +98,12 @@ async fn actual_main(config: Config) {
         let remaining = battery.state_of_charge().value;
         let state = battery.state();
 
-        println!("{:?} {}", state, remaining);
+        log::debug!("{:?} {}", state, remaining);
         match state {
             starship_battery::State::Charging | starship_battery::State::Full
                 if remaining > config.stop_thresh =>
             {
-                println!("TurnOff");
+                log::info!("TurnOff");
 
                 // Reconnect if needded
                 if !plug.is_connected().await.unwrap() {
@@ -83,7 +112,7 @@ async fn actual_main(config: Config) {
                 plug.set_state(SetStateOperation::TurnOff).await.unwrap();
             }
             _ if remaining < config.start_thresh => {
-                println!("TurnOn");
+                log::info!("TurnOn");
 
                 // Reconnect if needded
                 if !plug.is_connected().await.unwrap() {
@@ -105,14 +134,14 @@ async fn connect_plug(central: &mut Adapter, config: &Config) -> Result<PlugMini
     let mut plug = PlugMini::new(peripheral);
 
     plug.connect().await?;
-    println!("Connected");
+    log::info!("Connected");
 
     Ok(plug)
 }
 
 // Search for a SwitchBot Plug Mini
 async fn search_plug(central: &mut Adapter, config: &Config) -> Result<Peripheral> {
-    println!("Searching for the device...");
+    log::info!("Searching for the device...");
     central.start_scan(ScanFilter::default()).await?;
     let mut events = central.events().await?;
     while let Some(evt) = events.next().await {

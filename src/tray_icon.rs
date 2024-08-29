@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItemBuilder};
@@ -8,11 +10,15 @@ use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 // tray_icon needs an event loop.
 // The event loop has to be run in the same thread as the tray icon is created.
 // See: https://docs.rs/tray-icon/0.14.3/tray_icon/#platform-specific-notes
-pub(crate) fn run_tray_icon_loop() {
+pub(crate) fn run_tray_icon_loop(log_path: Option<PathBuf>) {
     let event_loop = EventLoopBuilder::new().build();
 
+    let menu_item_open_log = MenuItemBuilder::new()
+        .text("Open log")
+        .enabled(log_path.is_some())
+        .build();
     let menu_item_quit = MenuItemBuilder::new().text("Quit").enabled(true).build();
-    let menu = Menu::with_items(&[&menu_item_quit]).unwrap();
+    let menu = Menu::with_items(&[&menu_item_open_log, &menu_item_quit]).unwrap();
 
     let mut tray_icon = None;
 
@@ -36,9 +42,15 @@ pub(crate) fn run_tray_icon_loop() {
         }
 
         if let Ok(event) = menu_recv.try_recv() {
-            if event.id == menu_item_quit.id() {
+            if event.id == menu_item_open_log.id() {
+                if let Some(log_path) = &log_path {
+                    if let Err(e) = open::that_detached(log_path) {
+                        log::error!("Log open error: {:?}", e);
+                    }
+                }
+            } else if event.id == menu_item_quit.id() {
                 tray_icon.take();
-                *control_flow = ControlFlow::Exit;  // Tell tao to stop the event loop
+                *control_flow = ControlFlow::Exit; // Tell tao to stop the event loop
             }
         }
 
