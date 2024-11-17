@@ -29,7 +29,7 @@ async fn main() {
             let target = project_dirs
                 .cache_dir()
                 .join(now.format("log_%Y%m%d_%H%M%S.log").to_string());
-            
+
             fs::create_dir_all(target.parent().unwrap()).unwrap();
 
             logger_builder.target(env_logger::Target::Pipe(Box::new(
@@ -86,7 +86,7 @@ async fn actual_main(config: Config) {
         .next()
         .unwrap();
 
-    let mut plug = connect_plug(&mut central, &config).await.unwrap();
+    let mut plug = Some(connect_plug(&mut central, &config).await.unwrap());
 
     // Periodically do operations at a constant interval
     let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -98,6 +98,23 @@ async fn actual_main(config: Config) {
         let remaining = battery.state_of_charge().value;
         let state = battery.state();
 
+        if plug.is_some() {
+            if !plug.as_ref().unwrap().is_connected().await.unwrap() {
+                plug.take().unwrap().disconnect().await.unwrap();
+            }
+        }
+
+        // Reconnect if needded
+        if plug.is_none() {
+            match connect_plug(&mut central, &config).await {
+                Ok(p) => plug = Some(p),
+                Err(e) => {
+                    log::error!("{}", e);
+                    continue;
+                }
+            }
+        }
+
         log::debug!("{:?} {}", state, remaining);
         match state {
             starship_battery::State::Charging | starship_battery::State::Full
@@ -105,20 +122,20 @@ async fn actual_main(config: Config) {
             {
                 log::info!("TurnOff");
 
-                // Reconnect if needded
-                if !plug.is_connected().await.unwrap() {
-                    plug = connect_plug(&mut central, &config).await.unwrap();
+                if let Some(ref mut plug) = plug {
+                    plug.set_state(SetStateOperation::TurnOff).await.unwrap();
                 }
-                plug.set_state(SetStateOperation::TurnOff).await.unwrap();
             }
-            _ if remaining < config.start_thresh => {
+            starship_battery::State::Discharging
+            | starship_battery::State::Empty
+            | starship_battery::State::Unknown
+                if remaining < config.start_thresh =>
+            {
                 log::info!("TurnOn");
 
-                // Reconnect if needded
-                if !plug.is_connected().await.unwrap() {
-                    plug = connect_plug(&mut central, &config).await.unwrap();
+                if let Some(ref mut plug) = plug {
+                    plug.set_state(SetStateOperation::TurnOn).await.unwrap();
                 }
-                plug.set_state(SetStateOperation::TurnOn).await.unwrap();
             }
             _ => (),
         }
@@ -126,11 +143,7 @@ async fn actual_main(config: Config) {
 }
 
 async fn connect_plug(central: &mut Adapter, config: &Config) -> Result<PlugMini> {
-    let peripheral = tokio::time::timeout(
-        Duration::from_secs(config.search_timeout),
-        search_plug(central, config),
-    )
-    .await??;
+    let peripheral = search_plug_timeout(central, config).await?;
     let mut plug = PlugMini::new(peripheral);
 
     plug.connect().await?;
@@ -149,10 +162,19 @@ async fn search_plug(central: &mut Adapter, config: &Config) -> Result<Periphera
             let found_peripheral = central.peripheral(&id).await?;
             // Use the first device which matches with the specified MAC address
             if found_peripheral.address() == BDAddr::from_str_delim(&config.plug_mini.addr)? {
+                central.stop_scan().await?;
                 return Ok(found_peripheral);
             }
         }
     }
 
     unreachable!()
+}
+
+async fn search_plug_timeout(central: &mut Adapter, config: &Config) -> Result<Peripheral> {
+    Ok(tokio::time::timeout(
+        Duration::from_secs(config.search_timeout),
+        search_plug(central, config),
+    )
+    .await??)
 }

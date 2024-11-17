@@ -143,4 +143,8 @@ impl PlugMini {
     pub async fn is_connected(&self) -> Result<bool> {
         Ok(self.peripheral.is_connected().await? && self.initialized)
     }
+
+    pub async fn disconnect(self) -> Result<()> {
+        Ok(self.peripheral.disconnect().await?)
+    }
 }
