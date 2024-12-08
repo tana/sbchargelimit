@@ -1,20 +1,18 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod config;
-mod plug_mini;
 mod tray_icon;
 
 use std::fs::{self, OpenOptions};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use btleplug::api::{BDAddr, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
-use btleplug::platform::{Adapter, Manager, Peripheral};
+use btleplug::api::{BDAddr, Manager as _, Peripheral as _};
+use btleplug::platform::{Adapter, Manager};
 use config::Config;
 use directories::ProjectDirs;
 use env_logger::Env;
-use plug_mini::{PlugMini, SetStateOperation};
-use tokio_stream::StreamExt;
+use pluglib::{SmartPlug, SmartPlugEnum};
 
 const APP_NAME: &str = "sbchargelimit";
 
@@ -99,8 +97,8 @@ async fn actual_main(config: Config) {
         let state = battery.state();
 
         if plug.is_some() {
-            if !plug.as_ref().unwrap().is_connected().await.unwrap() {
-                plug.take().unwrap().disconnect().await.unwrap();
+            if !plug.as_ref().unwrap().peripheral().is_connected().await.unwrap() {
+                plug.take().unwrap().peripheral().disconnect().await.unwrap();
             }
         }
 
@@ -123,7 +121,7 @@ async fn actual_main(config: Config) {
                 log::info!("TurnOff");
 
                 if let Some(ref mut plug) = plug {
-                    plug.set_state(SetStateOperation::TurnOff).await.unwrap();
+                    plug.set_state(false).await.unwrap();
                 }
             }
             starship_battery::State::Discharging
@@ -134,7 +132,7 @@ async fn actual_main(config: Config) {
                 log::info!("TurnOn");
 
                 if let Some(ref mut plug) = plug {
-                    plug.set_state(SetStateOperation::TurnOn).await.unwrap();
+                    plug.set_state(true).await.unwrap();
                 }
             }
             _ => (),
@@ -142,39 +140,16 @@ async fn actual_main(config: Config) {
     }
 }
 
-async fn connect_plug(central: &mut Adapter, config: &Config) -> Result<PlugMini> {
-    let peripheral = search_plug_timeout(central, config).await?;
-    let mut plug = PlugMini::new(peripheral);
+async fn connect_plug(central: &mut Adapter, config: &Config) -> Result<SmartPlugEnum> {
+    let addr = BDAddr::from_str_delim(&config.plug.addr)?;
 
-    plug.connect().await?;
+    let plug = tokio::time::timeout(
+        Duration::from_secs(config.search_timeout),
+        pluglib::scan_and_connect(&central, |peripheral| peripheral.address() == addr),
+    )
+    .await??;
+
     log::info!("Connected");
 
     Ok(plug)
-}
-
-// Search for a SwitchBot Plug Mini
-async fn search_plug(central: &mut Adapter, config: &Config) -> Result<Peripheral> {
-    log::info!("Searching for the device...");
-    central.start_scan(ScanFilter::default()).await?;
-    let mut events = central.events().await?;
-    while let Some(evt) = events.next().await {
-        if let CentralEvent::DeviceDiscovered(id) = evt {
-            let found_peripheral = central.peripheral(&id).await?;
-            // Use the first device which matches with the specified MAC address
-            if found_peripheral.address() == BDAddr::from_str_delim(&config.plug_mini.addr)? {
-                central.stop_scan().await?;
-                return Ok(found_peripheral);
-            }
-        }
-    }
-
-    unreachable!()
-}
-
-async fn search_plug_timeout(central: &mut Adapter, config: &Config) -> Result<Peripheral> {
-    Ok(tokio::time::timeout(
-        Duration::from_secs(config.search_timeout),
-        search_plug(central, config),
-    )
-    .await??)
 }

@@ -9,17 +9,16 @@ readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.86"
-btleplug = "0.11.5"
+btleplug = "0.11.6"
 chrono = "0.4.38"
 confy = "0.6.1"
 directories = "5.0.1"
 env_logger = "0.11.5"
 log = "0.4.22"
 open = { version = "5.3.0", features = ["shellexecute-on-windows"] }
+pluglib = { git = "https://github.com/tana/pluglib.git", version = "0.1.0" }
 serde = { version = "1.0.203", features = ["derive"] }
 starship-battery = "0.8.3"
 tao = "0.28.1"
 tokio = { version = "1.38.0", features = ["full"] }
-tokio-stream = "0.1.15"
 tray-icon = "0.14.3"
-uuid = "1.8.0"
